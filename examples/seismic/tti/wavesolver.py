@@ -192,6 +192,7 @@ class AnisotropicWaveSolver(object):
             vp=vp, epsilon=epsilon, delta=delta, theta=theta, phi=phi)
         )
         # Execute operator and return wavefield and receiver data
+        from IPython import embed; embed()
         summary = self.op_adj().apply(srca=srca, rec=rec, p=p, r=r,
                                       dt=kwargs.pop('dt', self.dt), **kwargs)
         return srca, p, r, summary

@@ -7,7 +7,7 @@ from cached_property import cached_property
 from conftest import skipif, EVAL  # noqa
 from devito import (NODE, Eq, Inc, Constant, Function, TimeFunction, SparseTimeFunction,  # noqa
                     Dimension, SubDimension, Grid, Operator, norm, grad, div,
-                    switchconfig, configuration)
+                    switchconfig, configuration, centered, first_derivative, transpose)
 from devito.finite_differences.differentiable import diffify
 from devito.ir import DummyEq, Expression, FindNodes, FindSymbols, retrieve_iteration_tree
 from devito.passes.clusters.aliases import collect
@@ -1172,6 +1172,86 @@ class TestAliases(object):
         # Also check against expected operation count to make sure
         # all redundancies have been detected correctly
         assert summary[('section0', None)].ops == 115
+
+    @patch("devito.passes.clusters.aliases.MIN_COST_ALIAS", 1)
+    @switchconfig(profiling='advanced')
+    def test_bho(self):
+        #TODO
+        so = 4
+        to = 2
+        soh = so // 2
+        C = centered
+        T = transpose
+        dt = 0.001
+
+        grid = Grid(shape=(10, 10, 10), dtype=np.float64)
+        x, y, z = grid.dimensions
+
+        p = TimeFunction(name='p', grid=grid, space_order=so, time_order=to)
+        r = TimeFunction(name='r', grid=grid, space_order=so, time_order=to)
+        delta = Function(name='delta', grid=grid, space_order=so)
+        epsilon = Function(name='epsilon', grid=grid, space_order=so)
+        theta = Function(name='theta', grid=grid, space_order=so)
+        phi = Function(name='phi', grid=grid, space_order=so)
+        damp = Function(name='damp', grid=grid, space_order=1)
+        vp = Function(name='vp', grid=grid, space_order=so)
+
+        p.data_with_halo[:] = 1.
+        r.data_with_halo[:] = 0.5
+        delta.data_with_halo[:] = 0.2
+        epsilon.data_with_halo[:] = 0.4
+        theta.data_with_halo[:] = 0.8
+        phi.data_with_halo[:] = 0.2
+        damp.data_with_halo[:] = 0.2
+        vp.data_with_halo[:] = 1.5
+
+        costheta = cos(theta)
+        sintheta = sin(theta)
+        cosphi = cos(phi)
+        sinphi = sin(phi)
+
+        epsilon = 1 + 2*epsilon
+        delta = sqrt(1 + 2*delta)
+        s = grid.stepping_dim.spacing
+
+        # H0
+        field = epsilon*p + delta*r
+        Gz = -(sintheta * cosphi * first_derivative(field, dim=x, side=C, fd_order=soh) +
+               sintheta * sinphi * first_derivative(field, dim=y, side=C, fd_order=soh) +
+               costheta * first_derivative(field, dim=z, side=C, fd_order=soh))
+        Gzz = (first_derivative(Gz * sintheta * cosphi, dim=x, side=C, fd_order=soh, matvec=T) +
+               first_derivative(Gz * sintheta * sinphi, dim=y, side=C, fd_order=soh, matvec=T) +
+               first_derivative(Gz * costheta, dim=z, side=C, fd_order=soh, matvec=T))
+        H0 = field.laplace - Gzz
+
+        # HZ
+        field = delta*p + r
+        Gz = -(sintheta * cosphi * first_derivative(field, dim=x, side=C, fd_order=soh) +
+               sintheta * sinphi * first_derivative(field, dim=y, side=C, fd_order=soh) +
+               costheta * first_derivative(field, dim=z, side=C, fd_order=soh))
+        Gzz = (first_derivative(Gz * sintheta * cosphi, dim=x, side=C, fd_order=soh, matvec=T) +
+               first_derivative(Gz * sintheta * sinphi, dim=y, side=C, fd_order=soh, matvec=T) +
+               first_derivative(Gz * costheta, dim=z, side=C, fd_order=soh, matvec=T))
+        Hz = Gzz
+
+        # Equations
+        eqns = [Eq(p.backward, 1.0 / (2.0 * vp + s * damp) * (4.0 * vp * p + (s * damp - 2.0 * vp) * p.forward + 2.0 * s ** 2 * (H0)),
+                Eq(r.backward, 1.0 / (2.0 * vp + s * damp) * (4.0 * vp * r + (s * damp - 2.0 * vp) * r.forward + 2.0 * s ** 2 * (Hz)))]
+
+        op0 = Operator(eqns, subs=grid.spacing_map, opt=('noop', {'openmp': True}))
+        op1 = Operator(eqns, subs=grid.spacing_map, opt=('advanced', {'openmp': True}))
+        #TODO: ACTUALLY TRY MANY OPERATORS WITH INCREASING NUMBER OF CIRE-REPEATS
+
+        # Check numerical output
+        op0(time_M=1, dt=dt)
+        exp_norm_p = norm(p)
+        exp_norm_r = norm(r)
+        p.data_with_halo[:] = 1.
+        r.data_with_halo[:] = 0.5
+        summary = op1(time_M=1, dt=dt)
+        from IPython import embed; embed()
+        assert np.isclose(norm(p), exp_norm_p, atol=1e-5)
+        assert np.isclose(norm(r), exp_norm_r, rtol=1e-5)
 
 
 # Acoustic
