@@ -1182,7 +1182,6 @@ class TestAliases(object):
         soh = so // 2
         C = centered
         T = transpose
-        dt = 0.001
 
         grid = Grid(shape=(10, 10, 10), dtype=np.float64)
         x, y, z = grid.dimensions
@@ -1193,8 +1192,6 @@ class TestAliases(object):
         epsilon = Function(name='epsilon', grid=grid, space_order=so)
         theta = Function(name='theta', grid=grid, space_order=so)
         phi = Function(name='phi', grid=grid, space_order=so)
-        damp = Function(name='damp', grid=grid, space_order=1)
-        vp = Function(name='vp', grid=grid, space_order=so)
 
         p.data_with_halo[:] = 1.
         r.data_with_halo[:] = 0.5
@@ -1202,8 +1199,6 @@ class TestAliases(object):
         epsilon.data_with_halo[:] = 0.4
         theta.data_with_halo[:] = 0.8
         phi.data_with_halo[:] = 0.2
-        damp.data_with_halo[:] = 0.2
-        vp.data_with_halo[:] = 1.5
 
         costheta = cos(theta)
         sintheta = sin(theta)
@@ -1235,20 +1230,20 @@ class TestAliases(object):
         Hz = Gzz
 
         # Equations
-        eqns = [Eq(p.backward, 1.0 / (2.0 * vp + s * damp) * (4.0 * vp * p + (s * damp - 2.0 * vp) * p.forward + 2.0 * s ** 2 * (H0)),
-                Eq(r.backward, 1.0 / (2.0 * vp + s * damp) * (4.0 * vp * r + (s * damp - 2.0 * vp) * r.forward + 2.0 * s ** 2 * (Hz)))]
+        eqns = [Eq(p.backward, H0),
+                Eq(r.backward, Hz)]
 
         op0 = Operator(eqns, subs=grid.spacing_map, opt=('noop', {'openmp': True}))
         op1 = Operator(eqns, subs=grid.spacing_map, opt=('advanced', {'openmp': True}))
         #TODO: ACTUALLY TRY MANY OPERATORS WITH INCREASING NUMBER OF CIRE-REPEATS
 
         # Check numerical output
-        op0(time_M=1, dt=dt)
+        op0(time_M=1)
         exp_norm_p = norm(p)
         exp_norm_r = norm(r)
         p.data_with_halo[:] = 1.
         r.data_with_halo[:] = 0.5
-        summary = op1(time_M=1, dt=dt)
+        summary = op1(time_M=1)
         from IPython import embed; embed()
         assert np.isclose(norm(p), exp_norm_p, atol=1e-5)
         assert np.isclose(norm(r), exp_norm_r, rtol=1e-5)
