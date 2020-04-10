@@ -1207,19 +1207,7 @@ class TestAliases(object):
 
         epsilon = 1 + 2*epsilon
         delta = sqrt(1 + 2*delta)
-        s = grid.stepping_dim.spacing
 
-        # H0
-        field = epsilon*p + delta*r
-        Gz = -(sintheta * cosphi * first_derivative(field, dim=x, side=C, fd_order=soh) +
-               sintheta * sinphi * first_derivative(field, dim=y, side=C, fd_order=soh) +
-               costheta * first_derivative(field, dim=z, side=C, fd_order=soh))
-        Gzz = (first_derivative(Gz * sintheta * cosphi, dim=x, side=C, fd_order=soh, matvec=T) +
-               first_derivative(Gz * sintheta * sinphi, dim=y, side=C, fd_order=soh, matvec=T) +
-               first_derivative(Gz * costheta, dim=z, side=C, fd_order=soh, matvec=T))
-        H0 = field.laplace - Gzz
-
-        # HZ
         field = delta*p + r
         Gz = -(sintheta * cosphi * first_derivative(field, dim=x, side=C, fd_order=soh) +
                sintheta * sinphi * first_derivative(field, dim=y, side=C, fd_order=soh) +
@@ -1229,23 +1217,19 @@ class TestAliases(object):
                first_derivative(Gz * costheta, dim=z, side=C, fd_order=soh, matvec=T))
         Hz = Gzz
 
-        # Equations
-        eqns = [Eq(p.backward, H0),
-                Eq(r.backward, Hz)]
+        # Equation
+        eqn = [Eq(r.backward, Hz)]
 
-        op0 = Operator(eqns, subs=grid.spacing_map, opt=('noop', {'openmp': True}))
-        op1 = Operator(eqns, subs=grid.spacing_map, opt=('advanced', {'openmp': True}))
+        op0 = Operator(eqn, subs=grid.spacing_map, opt=('noop', {'openmp': True}))
+        op1 = Operator(eqn, subs=grid.spacing_map, opt=('advanced', {'openmp': True}))
         #TODO: ACTUALLY TRY MANY OPERATORS WITH INCREASING NUMBER OF CIRE-REPEATS
 
         # Check numerical output
         op0(time_M=1)
-        exp_norm_p = norm(p)
         exp_norm_r = norm(r)
-        p.data_with_halo[:] = 1.
         r.data_with_halo[:] = 0.5
         summary = op1(time_M=1)
         from IPython import embed; embed()
-        assert np.isclose(norm(p), exp_norm_p, atol=1e-5)
         assert np.isclose(norm(r), exp_norm_r, rtol=1e-5)
 
 
