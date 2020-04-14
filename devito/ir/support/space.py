@@ -203,8 +203,10 @@ class Interval(AbstractInterval):
     def flip(self):
         return Interval(self.dim, self.upper, self.lower, self.stamp)
 
-    def lift(self):
-        return Interval(self.dim, self.lower, self.upper, self.stamp + 1)
+    def lift(self, v=None):
+        if v is None:
+            v = self.stamp + 1
+        return Interval(self.dim, self.lower, self.upper, v)
 
     def reset(self):
         return Interval(self.dim, self.lower, self.upper, 0)
