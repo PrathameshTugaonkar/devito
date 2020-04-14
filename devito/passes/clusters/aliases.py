@@ -645,7 +645,13 @@ class Group(tuple):
                 except TypeError:
                     # E.g., `ofs[d] = x_m - x + 5`
                     ret[l] = (0, 0)
+                #if i.name == 'r43':
+                #    print (i, dict(ret))
+                #    if str(dict(ret)) == "{t: (0, 0), x: (-2, 2), y: (-3, 3), z: (-3, 5)}":
+                #        from IPython import embed; embed()
 
+        #if '4.5' in str(c):
+        #    print(c, '\n', dict(ret))
         return ret
 
 

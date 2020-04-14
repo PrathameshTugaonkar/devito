@@ -133,6 +133,11 @@ def scalarize(clusters, template):
                     handle = e.func(mapper[i], uxreplace(e.rhs, mapper))
                     handle = xreplace_indices(handle, shifting)
                     exprs.append(handle)
+                    from IPython import embed; embed()
+                    #TODO : PROBLEM IS THAT I'M SHIFTING AHEAD, BUT THE NOW-SCALAR
+                    # EXPRESSION REMAINS IN THE SAME ISPACE AS BEFORE, AND THEREFORE
+                    # IT WILL EXECUTE A FEW ITERATIONS AHEAD...POTENTIALLY CAUSING
+                    # AN OOB
             else:
                 exprs.append(e.func(e.lhs, uxreplace(e.rhs, mapper)))
 
