@@ -3,13 +3,13 @@ from collections import OrderedDict, defaultdict
 from cached_property import cached_property
 import numpy as np
 
-from devito.ir import (ROUNDABLE, DataSpace, IterationInstance, Interval,
-                       IntervalGroup, LabeledVector, detect_accesses, build_intervals)
+from devito.ir import (ROUNDABLE, DataSpace, IterationInstance, Interval, IntervalGroup,
+                       LabeledVector, Scope, detect_accesses, build_intervals)
 from devito.passes.clusters.utils import cluster_pass, make_is_time_invariant
 from devito.symbolics import (compare_ops, estimate_cost, q_constant, q_leaf,
                               q_sum_of_product, q_terminalop, retrieve_indexed,
-                              uxreplace, yreplace)
-from devito.tools import flatten
+                              uxreplace, xreplace_indices, yreplace)
+from devito.tools import filter_ordered, flatten
 from devito.types import Array, Eq, ShiftedDimension, Scalar
 
 __all__ = ['cire']
@@ -145,6 +145,9 @@ def cire(cluster, template, mode, options, platform):
         processed.extend(clusters)
         cluster = rebuilt
         context = flatten(c.exprs for c in processed) + list(cluster.exprs)
+
+    # Handle data dependences across the processed Clusters
+    processed = schedule(processed, cluster, template)
 
     processed.append(cluster)
 
@@ -341,7 +344,7 @@ def choose(exprs, aliases, selector):
 def process(cluster, chosen, aliases, template, platform):
     clusters = []
     subs = {}
-    for alias, writeto, aliaseds, distances in aliases.schedule(cluster.ispace):
+    for alias, writeto, aliaseds, distances in aliases.iter(cluster.ispace):
         if all(i not in chosen for i in aliaseds):
             continue
 
@@ -412,6 +415,7 @@ def process(cluster, chosen, aliases, template, platform):
 
         # Finally, build a new Cluster for `alias`
         built = cluster.rebuild(exprs=expression, ispace=ispace, dspace=dspace)
+        #TODO: why not just append??
         clusters.insert(0, built)
 
     return clusters, subs
@@ -431,6 +435,134 @@ def rebuild(cluster, others, aliases, subs):
     dspace = DataSpace(cluster.dspace.intervals, parts)
 
     return cluster.rebuild(exprs=exprs, ispace=ispace, dspace=dspace)
+
+
+def schedule(clusters, unprocessed, template):
+    mapper = {}
+    processed = []
+
+    def apply_scalarization(c):
+        subs = {}
+        for output, expr in mapper.items():
+            f = output.function
+            for i in c.scope[f]:
+                indexed = i.indexed
+                assert len(f.indices) == len(indexed.indices)
+
+                shifting = {d: d + (i1 - i0) for d, i0, i1 in
+                            zip(f.dimensions, output.indices, indexed.indices)}
+
+                subs[indexed] = xreplace_indices(expr, shifting)
+
+        if subs:
+            exprs = [e.xreplace(subs) for e in c.exprs]
+            return c.rebuild(exprs=exprs)
+        else:
+            return c
+
+    def induce_lifting(c):
+        """
+        The Clusters requiring `c`'s IterationSpace be lifted in order to
+        honor all data dependences.
+        """
+        ret = []
+        for c1 in processed:
+            if c.ispace != c1.ispace:
+                continue
+
+            scope = Scope(exprs=c1.exprs + c.exprs)
+            if not all(i.is_indep() for i in scope.d_all_gen()):
+                ret.append(c1)
+
+        return ret
+
+    def legal_shifts(c):
+        """
+        Max tolerated shifting for `c`.
+        """
+        mapper = defaultdict(lambda: (-np.inf, np.inf))
+        for f, reads in c.scope.reads.items():
+            if not f.is_Function:
+                continue
+
+            for i in reads:
+                for d in i.aindices:
+                    # `f`'s cumulative halo size along `d`
+                    hsize = sum(f._size_halo[d])
+
+                    # Offset value
+                    v = i[d] - d
+
+                    # Add in the iteration space offset
+                    lower, upper = i.intervals[d].offsets
+
+                    maxd = min(0, max(mapper[d][0], -v - lower))
+                    mini = max(0, min(mapper[d][1], hsize - v - upper))
+                    mapper[d] = (maxd, mini)
+
+        return mapper
+
+    def is_scalarizable(c, clusters):
+        """
+        `c` is scalarizable iff there won't be OOB accesses once all Array reads
+        will have been replaced with scalars. E.g., consider
+
+            r[x,y,z] = g(b[x,y,z])                 t0 = g(b[x,y,z])
+            ... = r[x,y,z] + r[x,y,z+1]`  ---->    t1 = g(b[x,y,z+1])
+                                                   ... = t0 + t1
+
+        Then `c` is scalarizable as long as `b[x,y,z+1]` won't go OOB given
+        `c`'s iteration space.
+        """
+        # If `f` appears in `unprocessed`, then nothing we can do
+        assert len(c.exprs) == 1
+        f = c.exprs[0].lhs.function
+        if f in unprocessed.scope.reads:
+            return False
+
+        mapper = legal_shifts(c)
+        for c1 in clusters:
+            scope = Scope(exprs=c.exprs + c1.exprs)
+
+            for i in scope.d_all_gen():
+                assert i.is_cross
+                assert i.function.is_Array
+
+                for d, (maxd, mini) in mapper.items():
+                    v = i.distance_mapper.get(d, 0)
+                    # Scalarizable <=> not exceeding the allowed shifts
+                    if v < maxd or v > mini:
+                        return False
+
+        return True
+
+    for n, c0 in enumerate(clusters):
+        # Apply substitutions due to scalarized Clusters
+        c = apply_scalarization(c0)
+
+        # Do we need lifting due to data dependences?
+        found = induce_lifting(c)
+        if found:
+            #TODO: LIFTING!
+            print("AAAAA")
+            from IPython import embed; embed()
+            processed.append(c)
+            continue
+
+        # Attempt scalarization
+        if is_scalarizable(c, clusters[n+1:]):
+            assert len(c.exprs) == 1
+            expr = c.exprs[0]
+            mapper[expr.lhs] = expr.rhs
+        else:
+            processed.append(c)
+
+    if processed:
+        from IPython import embed; embed()
+    return processed
+
+
+# Utilities
 
 
 class Candidate(object):
@@ -486,9 +618,6 @@ class Candidate(object):
     @cached_property
     def dimensions(self):
         return frozenset(i for i, _ in self.Toffsets)
-
-
-# Utilities
 
 
 class Group(tuple):
@@ -645,13 +774,7 @@ class Group(tuple):
                 except TypeError:
                     # E.g., `ofs[d] = x_m - x + 5`
                     ret[l] = (0, 0)
-                #if i.name == 'r43':
-                #    print (i, dict(ret))
-                #    if str(dict(ret)) == "{t: (0, 0), x: (-2, 2), y: (-3, 3), z: (-3, 5)}":
-                #        from IPython import embed; embed()
 
-        #if '4.5' in str(c):
-        #    print(c, '\n', dict(ret))
         return ret
 
 
@@ -694,7 +817,7 @@ class Aliases(OrderedDict):
                 return aliaseds
         return []
 
-    def schedule(self, ispace):
+    def iter(self, ispace):
         """
         The aliases can be be scheduled in any order, but we privilege the one
         that minimizes storage while maximizing fusion.
@@ -715,6 +838,7 @@ class Aliases(OrderedDict):
                     # E.g., `i=x[0,0]<1>` and `interval=x[-4,4]<0>`. We need to
                     # use `<1>` which is the actual stamp used in the Cluster
                     # from which the aliasing expressions were extracted
+                    #TODO: USE LIFT(v=...)
                     assert i.stamp >= interval.stamp
                     while interval.stamp != i.stamp:
                         interval = interval.lift()
