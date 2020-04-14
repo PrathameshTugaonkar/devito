@@ -1189,14 +1189,12 @@ class TestAliases(object):
         p = TimeFunction(name='p', grid=grid, space_order=so, time_order=to)
         r = TimeFunction(name='r', grid=grid, space_order=so, time_order=to)
         delta = Function(name='delta', grid=grid, space_order=so)
-        epsilon = Function(name='epsilon', grid=grid, space_order=so)
         theta = Function(name='theta', grid=grid, space_order=so)
         phi = Function(name='phi', grid=grid, space_order=so)
 
         p.data_with_halo[:] = 1.
         r.data_with_halo[:] = 0.5
         delta.data_with_halo[:] = 0.2
-        epsilon.data_with_halo[:] = 0.4
         theta.data_with_halo[:] = 0.8
         phi.data_with_halo[:] = 0.2
 
@@ -1205,8 +1203,7 @@ class TestAliases(object):
         cosphi = cos(phi)
         sinphi = sin(phi)
 
-        epsilon = 1 + 2*epsilon
-        delta = sqrt(1 + 2*delta)
+        delta = sqrt(delta)
 
         field = delta*p + r
         Gz = -(sintheta * cosphi * first_derivative(field, dim=x, side=C, fd_order=soh) +
