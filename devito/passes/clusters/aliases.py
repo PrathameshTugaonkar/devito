@@ -420,8 +420,7 @@ def process(cluster, chosen, aliases, template, platform):
 
         # Finally, build a new Cluster for `alias`
         built = cluster.rebuild(exprs=expression, ispace=ispace, dspace=dspace)
-        #TODO: why not just append??
-        clusters.insert(0, built)
+        clusters.append(built)
 
     return clusters, subs
 
@@ -718,10 +717,8 @@ class Aliases(OrderedDict):
                     # E.g., `i=x[0,0]<1>` and `interval=x[-4,4]<0>`. We need to
                     # use `<1>` which is the actual stamp used in the Cluster
                     # from which the aliasing expressions were extracted
-                    #TODO: USE LIFT(v=...)
                     assert i.stamp >= interval.stamp
-                    while interval.stamp != i.stamp:
-                        interval = interval.lift()
+                    interval = interval.lift(i.stamp)
 
                     writeto.append(interval)
 
