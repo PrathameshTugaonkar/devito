@@ -1175,10 +1175,9 @@ class TestAliases(object):
 
     @patch("devito.passes.clusters.aliases.MIN_COST_ALIAS", 1)
     @switchconfig(profiling='advanced')
-    def test_scalarization(self):
+    def test_tti_adjoint_akin(self):
         """
-        Check that scalarization is applied conservatively, that is such that
-        definitely no OOB accesses are generated.
+        Extrapolated from TTI adjoint.
         """
         so = 4
         to = 2
@@ -1228,8 +1227,11 @@ class TestAliases(object):
         exp_norm_r = norm(r)
         r.data_with_halo[:] = 0.5
         summary = op1(time_M=1)
-        from IPython import embed; embed()
         assert np.isclose(norm(r), exp_norm_r, rtol=1e-5)
+
+        # Also check against expected operation count to make sure
+        # all redundancies have been detected correctly
+        assert summary[('section1', None)].ops == 39
 
 
 # Acoustic

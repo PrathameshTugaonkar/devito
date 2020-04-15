@@ -108,7 +108,7 @@ def cire(cluster, template, mode, options, platform):
             return q_sum_of_product
 
         # Extraction model
-        model = lambda e: not (q_leaf(e) or q_terminalop(e))
+        model = lambda e: not (q_leaf(e) or q_terminalop(e, depth=2))
 
         # Collection rule
         ignore_collected = lambda g: len(g) <= 1
@@ -145,10 +145,6 @@ def cire(cluster, template, mode, options, platform):
         processed.extend(clusters)
         cluster = rebuilt
         context = flatten(c.exprs for c in processed) + list(cluster.exprs)
-
-    # Optimization: apply scalarization, to turn Arrays that are read in only
-    # one place into Scalars
-    processed = scalarize(processed, cluster, template)
 
     processed.append(cluster)
 
@@ -436,40 +432,6 @@ def rebuild(cluster, others, aliases, subs):
     dspace = DataSpace(cluster.dspace.intervals, parts)
 
     return cluster.rebuild(exprs=exprs, ispace=ispace, dspace=dspace)
-
-
-def scalarize(clusters, unprocessed, template):
-    mapper = {}
-    processed = []
-    for c0 in clusters:
-        # Propagate the effect of scalarized Clusters inside `c0`.
-        subs = {}
-        for output, expr in mapper.items():
-            f = output.function
-            for i in c0.scope[f]:
-                indexed = i.indexed
-                assert len(f.indices) == len(indexed.indices)
-
-                shifting = {d: d + (i1 - i0) for d, i0, i1 in
-                            zip(f.dimensions, output.indices, indexed.indices)}
-
-                subs[indexed] = xreplace_indices(expr, shifting)
-        if subs:
-            exprs = [e.xreplace(subs) for e in c0.exprs]
-            c = c0.rebuild(exprs=exprs)
-        else:
-            c = c0
-
-        # Attempt scalarization
-        assert len(c.exprs) == 1
-        expr = c.exprs[0]
-        if expr.lhs.function not in unprocessed.scope.reads:
-            # It is indeed scalarizable
-            mapper[expr.lhs] = expr.rhs
-        else:
-            processed.append(c)
-
-    return processed
 
 
 # Utilities
