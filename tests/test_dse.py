@@ -1171,7 +1171,7 @@ class TestAliases(object):
 
         # Also check against expected operation count to make sure
         # all redundancies have been detected correctly
-        assert summary[('section0', None)].ops == 115
+        assert summary[('section0', None)].ops == 120
 
     @patch("devito.passes.clusters.aliases.MIN_COST_ALIAS", 1)
     @switchconfig(profiling='advanced')

@@ -8,8 +8,8 @@ from devito.ir import (ROUNDABLE, DataSpace, IterationInstance, Interval, Interv
 from devito.passes.clusters.utils import cluster_pass, make_is_time_invariant
 from devito.symbolics import (compare_ops, estimate_cost, q_constant, q_leaf,
                               q_sum_of_product, q_terminalop, retrieve_indexed,
-                              uxreplace, xreplace_indices, yreplace)
-from devito.tools import filter_ordered, flatten
+                              uxreplace, yreplace)
+from devito.tools import flatten
 from devito.types import Array, Eq, ShiftedDimension, Scalar
 
 __all__ = ['cire']
@@ -127,6 +127,13 @@ def cire(cluster, template, mode, options, platform):
             # Do not waste time
             continue
 
+        # There can't be Dimension-dependent data dependences with any of
+        # the `processed` Clusters, otherwise we would risk either OOB accesses
+        # or reading from garbage uncomputed halo
+        scope = Scope(exprs=flatten(c.exprs for c in processed) + extracted)
+        if not all(i.is_indep() for i in scope.d_all_gen()):
+            break
+
         # Search aliasing expressions
         aliases = collect(extracted, min_storage, ignore_collected)
 
@@ -138,10 +145,6 @@ def cire(cluster, template, mode, options, platform):
 
         # Create Aliases and assign them to Clusters
         clusters, subs = process(cluster, chosen, aliases, template, platform)
-
-        # The `clusters` might depend on some values computed in `processed`,
-        # hence their IterationSpace might need to be lifted
-        clusters = lift(clusters, processed)
 
         # Rebuild `cluster` so as to use the newly created Aliases
         rebuilt = rebuild(cluster, others, aliases, subs)
@@ -421,31 +424,6 @@ def process(cluster, chosen, aliases, template, platform):
         clusters.insert(0, built)
 
     return clusters, subs
-
-
-def lift(clusters, processed):
-    cause = defaultdict(int)
-    for c0 in clusters:
-        for c1 in processed:
-            if c0.ispace != c1.ispace:
-                continue
-
-            scope = Scope(exprs=c1.exprs + c0.exprs)
-
-            for d in scope.d_all.cause_strict:
-                stamp = c1.ispace.intervals[d].stamp
-                cause[d] = max(cause[d], stamp)
-
-    if cause:
-        ret = []
-        for c in clusters:
-            ispace = c.ispace
-            for d, v in cause.items():
-                ispace = ispace.lift(d, v + 1)
-            ret.append(c.rebuild(ispace=ispace))
-        return ret
-    else:
-        return clusters
 
 
 def rebuild(cluster, others, aliases, subs):
