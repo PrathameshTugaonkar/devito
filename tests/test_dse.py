@@ -1175,8 +1175,11 @@ class TestAliases(object):
 
     @patch("devito.passes.clusters.aliases.MIN_COST_ALIAS", 1)
     @switchconfig(profiling='advanced')
-    def test_bho(self):
-        #TODO
+    def test_scalarization(self):
+        """
+        Check that scalarization is applied conservatively, that is such that
+        definitely no OOB accesses are generated.
+        """
         so = 4
         to = 2
         soh = so // 2
@@ -1219,7 +1222,6 @@ class TestAliases(object):
 
         op0 = Operator(eqn, subs=grid.spacing_map, opt=('noop', {'openmp': True}))
         op1 = Operator(eqn, subs=grid.spacing_map, opt=('advanced', {'openmp': True}))
-        #TODO: ACTUALLY TRY MANY OPERATORS WITH INCREASING NUMBER OF CIRE-REPEATS
 
         # Check numerical output
         op0(time_M=1)

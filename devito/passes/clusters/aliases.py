@@ -442,6 +442,9 @@ def schedule(clusters, unprocessed, template):
     processed = []
 
     def apply_scalarization(c):
+        """
+        Propagate the effect of scalarized Clusters inside `c`.
+        """
         subs = {}
         for output, expr in mapper.items():
             f = output.function
@@ -462,17 +465,16 @@ def schedule(clusters, unprocessed, template):
 
     def induce_lifting(c):
         """
-        The Clusters requiring `c`'s IterationSpace be lifted in order to
-        honor all data dependences.
+        The Dimensions amongst the Clusters in `processed` inducing a data
+        dependence on `c`.
         """
-        ret = []
+        ret = set()
         for c1 in processed:
             if c.ispace != c1.ispace:
                 continue
 
             scope = Scope(exprs=c1.exprs + c.exprs)
-            if not all(i.is_indep() for i in scope.d_all_gen()):
-                ret.append(c1)
+            ret.update(scope.d_all.cause_strict)
 
         return ret
 
@@ -543,10 +545,8 @@ def schedule(clusters, unprocessed, template):
         # Do we need lifting due to data dependences?
         found = induce_lifting(c)
         if found:
-            #TODO: LIFTING!
-            print("AAAAA")
-            from IPython import embed; embed()
-            processed.append(c)
+            ispace = c.ispace.lift(found)
+            processed.append(c.rebuild(ispace=ispace))
             continue
 
         # Attempt scalarization
@@ -557,8 +557,6 @@ def schedule(clusters, unprocessed, template):
         else:
             processed.append(c)
 
-    if processed:
-        from IPython import embed; embed()
     return processed
 
 
