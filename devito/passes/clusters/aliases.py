@@ -4,7 +4,7 @@ from cached_property import cached_property
 import numpy as np
 
 from devito.ir import (ROUNDABLE, DataSpace, IterationInstance, Interval, IntervalGroup,
-                       LabeledVector, detect_accesses, build_intervals)
+                       LabeledVector, Scope, detect_accesses, build_intervals)
 from devito.passes.clusters.utils import cluster_pass, make_is_time_invariant
 from devito.symbolics import (compare_ops, estimate_cost, q_constant, q_leaf,
                               q_sum_of_product, q_terminalop, retrieve_indexed,
@@ -424,8 +424,28 @@ def process(cluster, chosen, aliases, template, platform):
 
 
 def lift(clusters, processed):
-    from IPython import embed; embed()
-    return clusters
+    cause = defaultdict(int)
+    for c0 in clusters:
+        for c1 in processed:
+            if c0.ispace != c1.ispace:
+                continue
+
+            scope = Scope(exprs=c1.exprs + c0.exprs)
+
+            for d in scope.d_all.cause_strict:
+                stamp = c1.ispace.intervals[d].stamp
+                cause[d] = max(cause[d], stamp)
+
+    if cause:
+        ret = []
+        for c in clusters:
+            ispace = c.ispace
+            for d, v in cause.items():
+                ispace = ispace.lift(d, v + 1)
+            ret.append(c.rebuild(ispace=ispace))
+        return ret
+    else:
+        return clusters
 
 
 def rebuild(cluster, others, aliases, subs):
