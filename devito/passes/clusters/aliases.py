@@ -88,43 +88,44 @@ def cire(cluster, template, mode, options, platform):
     min_storage = options['min-storage']
 
     # Setup callbacks
-    if mode == 'invariants':
-        # Extraction rule
-        def extractor(context):
-            return make_is_time_invariant(context)
-
-        # Extraction model
+    def callbacks_invariants(context, *args):
+        extractor = make_is_time_invariant(context)
         model = lambda e: estimate_cost(e, True) >= MIN_COST_ALIAS_INV
-
-        # Collection rule
         ignore_collected = lambda g: False
-
-        # Selection rule
         selector = lambda c, n: c >= MIN_COST_ALIAS_INV and n >= 1
+        return extractor, model, ignore_collected, selector
 
-    elif mode == 'sops':
-        # Extraction rule
-        def extractor(context):
-            return q_sum_of_product
+    def callbacks_sops(context, n):
+        # The `depth` determines "how big" the extracted sum-of-products will be.
+        # We observe that in typical FD codes:
+        #   add(mul, mul, ...) -> stems from first order derivative
+        #   add(mul(add(mul, mul, ...), ...), ...) -> stems from second order derivative
+        # To catch the former, we would need `depth=1`; for the latter, `depth=3`
+        depth = 2*(n + 1) - 1
 
-        # Extraction model
-        model = lambda e: not (q_leaf(e) or q_terminalop(e, depth=2))
-
-        # Collection rule
+        extractor = lambda e: q_sum_of_product(e, depth)
+        model = lambda e: not (q_leaf(e) or q_terminalop(e, depth-1))
         ignore_collected = lambda g: len(g) <= 1
-
-        # Selection rule
         selector = lambda c, n: c >= MIN_COST_ALIAS and n > 1
+        return extractor, model, ignore_collected, selector
 
-    # Actual CIRE
+    callbacks_mapper = {
+        'invariants': callbacks_invariants,
+        'sops': callbacks_sops
+    }
+
+    # The main CIRE loop
     processed = []
     context = cluster.exprs
-    for _ in range(options['cire-repeats'][mode]):
+    for n in reversed(range(options['cire-repeats'][mode])):
+        # Get the callbacks
+        extractor, model, ignore_collected, selector = callbacks_mapper[mode](context, n)
+
         # Extract potentially aliasing expressions
-        exprs, extracted = extract(cluster, extractor(context), model, template)
+        exprs, extracted = extract(cluster, extractor, model, template)
         if not extracted:
             # Do not waste time
-            break
+            continue
 
         # Search aliasing expressions
         aliases = collect(extracted, min_storage, ignore_collected)
@@ -133,10 +134,14 @@ def cire(cluster, template, mode, options, platform):
         chosen, others = choose(exprs, aliases, selector)
         if not chosen:
             # Do not waste time
-            break
+            continue
 
         # Create Aliases and assign them to Clusters
         clusters, subs = process(cluster, chosen, aliases, template, platform)
+
+        # The `clusters` might depend on some values computed in `processed`,
+        # hence their IterationSpace might need to be lifted
+        clusters = lift(clusters, processed)
 
         # Rebuild `cluster` so as to use the newly created Aliases
         rebuilt = rebuild(cluster, others, aliases, subs)
@@ -416,6 +421,11 @@ def process(cluster, chosen, aliases, template, platform):
         clusters.insert(0, built)
 
     return clusters, subs
+
+
+def lift(clusters, processed):
+    from IPython import embed; embed()
+    return clusters
 
 
 def rebuild(cluster, others, aliases, subs):
