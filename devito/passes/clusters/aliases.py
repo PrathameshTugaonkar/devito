@@ -4,7 +4,7 @@ from cached_property import cached_property
 import numpy as np
 
 from devito.ir import (ROUNDABLE, DataSpace, IterationInstance, Interval, IntervalGroup,
-                       LabeledVector, Scope, detect_accesses, build_intervals)
+                       LabeledVector, detect_accesses, build_intervals)
 from devito.passes.clusters.utils import cluster_pass, make_is_time_invariant
 from devito.symbolics import (compare_ops, estimate_cost, q_constant, q_leaf,
                               q_sum_of_product, q_terminalop, retrieve_indexed,
@@ -146,8 +146,9 @@ def cire(cluster, template, mode, options, platform):
         cluster = rebuilt
         context = flatten(c.exprs for c in processed) + list(cluster.exprs)
 
-    # Handle data dependences across the processed Clusters
-    processed = schedule(processed, cluster, template)
+    # Optimization: apply scalarization, to turn Arrays that are read in only
+    # one place into Scalars
+    processed = scalarize(processed, cluster, template)
 
     processed.append(cluster)
 
@@ -437,18 +438,15 @@ def rebuild(cluster, others, aliases, subs):
     return cluster.rebuild(exprs=exprs, ispace=ispace, dspace=dspace)
 
 
-def schedule(clusters, unprocessed, template):
+def scalarize(clusters, unprocessed, template):
     mapper = {}
     processed = []
-
-    def apply_scalarization(c):
-        """
-        Propagate the effect of scalarized Clusters inside `c`.
-        """
+    for c0 in clusters:
+        # Propagate the effect of scalarized Clusters inside `c0`.
         subs = {}
         for output, expr in mapper.items():
             f = output.function
-            for i in c.scope[f]:
+            for i in c0.scope[f]:
                 indexed = i.indexed
                 assert len(f.indices) == len(indexed.indices)
 
@@ -456,103 +454,17 @@ def schedule(clusters, unprocessed, template):
                             zip(f.dimensions, output.indices, indexed.indices)}
 
                 subs[indexed] = xreplace_indices(expr, shifting)
-
         if subs:
-            exprs = [e.xreplace(subs) for e in c.exprs]
-            return c.rebuild(exprs=exprs)
+            exprs = [e.xreplace(subs) for e in c0.exprs]
+            c = c0.rebuild(exprs=exprs)
         else:
-            return c
-
-    def induce_lifting(c):
-        """
-        The Dimensions amongst the Clusters in `processed` inducing a data
-        dependence on `c`.
-        """
-        ret = set()
-        for c1 in processed:
-            if c.ispace != c1.ispace:
-                continue
-
-            scope = Scope(exprs=c1.exprs + c.exprs)
-            ret.update(scope.d_all.cause_strict)
-
-        return ret
-
-    def legal_shifts(c):
-        """
-        Max tolerated shifting for `c`.
-        """
-        mapper = defaultdict(lambda: (-np.inf, np.inf))
-        for f, reads in c.scope.reads.items():
-            if not f.is_Function:
-                continue
-
-            for i in reads:
-                for d in i.aindices:
-                    # `f`'s cumulative halo size along `d`
-                    hsize = sum(f._size_halo[d])
-
-                    # Offset value
-                    v = i[d] - d
-
-                    # Add in the iteration space offset
-                    lower, upper = i.intervals[d].offsets
-
-                    maxd = min(0, max(mapper[d][0], -v - lower))
-                    mini = max(0, min(mapper[d][1], hsize - v - upper))
-                    mapper[d] = (maxd, mini)
-
-        return mapper
-
-    def is_scalarizable(c, clusters):
-        """
-        `c` is scalarizable iff there won't be OOB accesses once all Array reads
-        will have been replaced with scalars. E.g., consider
-
-            r[x,y,z] = g(b[x,y,z])                 t0 = g(b[x,y,z])
-            ... = r[x,y,z] + r[x,y,z+1]`  ---->    t1 = g(b[x,y,z+1])
-                                                   ... = t0 + t1
-
-        Then `c` is scalarizable as long as `b[x,y,z+1]` won't go OOB given
-        `c`'s iteration space.
-        """
-        # If `f` appears in `unprocessed`, then nothing we can do
-        assert len(c.exprs) == 1
-        f = c.exprs[0].lhs.function
-        if f in unprocessed.scope.reads:
-            return False
-
-        mapper = legal_shifts(c)
-        for c1 in clusters:
-            scope = Scope(exprs=c.exprs + c1.exprs)
-
-            for i in scope.d_all_gen():
-                assert i.is_cross
-                assert i.function.is_Array
-
-                for d, (maxd, mini) in mapper.items():
-                    v = i.distance_mapper.get(d, 0)
-                    # Scalarizable <=> not exceeding the allowed shifts
-                    if v < maxd or v > mini:
-                        return False
-
-        return True
-
-    for n, c0 in enumerate(clusters):
-        # Apply substitutions due to scalarized Clusters
-        c = apply_scalarization(c0)
-
-        # Do we need lifting due to data dependences?
-        found = induce_lifting(c)
-        if found:
-            ispace = c.ispace.lift(found)
-            processed.append(c.rebuild(ispace=ispace))
-            continue
+            c = c0
 
         # Attempt scalarization
-        if is_scalarizable(c, clusters[n+1:]):
-            assert len(c.exprs) == 1
-            expr = c.exprs[0]
+        assert len(c.exprs) == 1
+        expr = c.exprs[0]
+        if expr.lhs.function not in unprocessed.scope.reads:
+            # It is indeed scalarizable
             mapper[expr.lhs] = expr.rhs
         else:
             processed.append(c)
