@@ -448,15 +448,28 @@ class Dependence(object):
 
     @cached_property
     def cause(self):
-        """Return the findex causing the dependence."""
+        """
+        Return the hierarchy of Dimensions rooted in the findex causing the dependence.
+        """
+        retval = self.cause_strict
+        if retval is None:
+            return frozenset()
+        else:
+            return retval._defines
+
+    @cached_property
+    def cause_strict(self):
+        """
+        Return the findex causing the dependence.
+        """
         for i, j in zip(self.findices, self.distance):
             try:
                 if j > 0:
-                    return i._defines
+                    return i
             except TypeError:
                 # Conservatively assume this is an offending dimension
-                return i._defines
-        return frozenset()
+                return i
+        return None
 
     @cached_property
     def read(self):
@@ -627,6 +640,10 @@ class DependenceGroup(set):
     @cached_property
     def cause(self):
         return frozenset().union(*[i.cause for i in self])
+
+    @cached_property
+    def cause_strict(self):
+        return frozenset(i.cause_strict for i in self)
 
     @cached_property
     def functions(self):
