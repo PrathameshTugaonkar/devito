@@ -1,10 +1,11 @@
 from operator import attrgetter
 
+from devito.finite_differences.differentiable import DifferentiableOp
 from devito.symbolics import retrieve_indexed, split_affine
 from devito.tools import PartialOrderTuple, filter_sorted, flatten
 from devito.types import Dimension
 
-__all__ = ['dimension_sort']
+__all__ = ['dimension_sort', 'lower_operations']
 
 
 def dimension_sort(expr):
@@ -64,3 +65,29 @@ def dimension_sort(expr):
     ordering = PartialOrderTuple(extra, relations=(relations | implicit_relations))
 
     return ordering
+
+
+def lower_operations(expr):
+    """
+    Construct an expression semantically equivalent to ``expr`` in which all
+    operations of type Differentiable have been lowered to SymPy operations.
+    """
+
+    def _lower_operations(obj):
+        flag = False
+        args = []
+        for a in obj.args:
+            ax, af = _lower_operations(a)
+            args.append(ax)
+            flag |= af
+        if isinstance(obj, DifferentiableOp):
+            for cls in obj.__class__.mro()[1:]:
+                if obj.__class__.__name__ == cls.__name__:
+                    return cls(*args, evaluate=False), True
+            assert False
+        elif flag:
+            return obj.func(*args, evaluate=False), True
+        else:
+            return obj, False
+
+    return _lower_operations(expr)[0]
