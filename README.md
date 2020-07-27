@@ -85,7 +85,7 @@ through the [tutorials](https://github.com/devitocodes/devito/tree/master/exampl
 provided with Devito or create your own notebooks.
 
 [See here](http://devitocodes.github.io/devito/download.html) for detailed installation
-instructions and other options. If you encounter a problem during installation, please
+instructions and other options. For the Windwos specific installation, see this [tutorial](https://medium.com/@soulfoodpst/install-devito-on-windows-a-tool-for-automatic-programming-3def3949e5c8). If you encounter a problem during installation, please
 see the
 [installation issues](https://github.com/devitocodes/devito/wiki/Installation-Issues) we
 have seen in the past. 
